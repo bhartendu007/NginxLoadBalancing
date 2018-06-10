@@ -1,0 +1,18 @@
+---
+- name: Update the repository cache and install package apache
+  apt:
+    name: golang
+    update_cache: yes
+    state: latest
+    default_release: xenial
+
+- name: Generate inventory_output_file
+  template:
+    src: test.go
+    dest: /home/ubuntu
+    mode: '0660'
+
+- name: execute GO
+  shell: "cd /home/ubuntu;go build test.go;nohup ./test </dev/null >/dev/null 2>&1 &"
+
+

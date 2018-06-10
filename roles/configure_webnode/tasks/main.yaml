@@ -1,0 +1,35 @@
+---
+- name: Update the repository cache and update package "nginx" to latest version using default release squeeze-backport
+  apt:
+    name: nginx
+    state: latest
+    default_release: xenial
+    update_cache: yes
+
+- name: Start nginx service
+  service:
+    name: nginx
+    state: running
+
+- set_fact:
+    golang: |
+      {% set comma = joiner("\n") %}
+      {% for item in groups['app-instances'] -%}
+      server {{ comma() }}{{ hostvars[item].ansible_hostname }}:8484;
+      {%- endfor %}
+
+- set_fact:
+     nginx_server: |
+      {% set comma = joiner("\n") %}
+      {% for item in groups['ec2-instances'] -%}
+      server_name {{ comma() }}{{ hostvars[item].ansible_hostname }};
+      {%- endfor %}
+
+- name: Update nginx configuration file
+  template:
+    src: nginx.conf
+    dest: /etc/nginx/nginx.conf
+
+- name: restart nginx
+  command: systemctl restart nginx
+

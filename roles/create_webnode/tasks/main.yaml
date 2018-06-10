@@ -1,0 +1,90 @@
+---
+-   name: Create security group
+    ec2_group:
+        name: "{{ project_name }}_security_group"
+        description: "{{ project_name }} security group"
+        region: "{{ aws_region }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc_id }}"
+        rules:
+            - proto: tcp
+              from_port: 22
+              to_port: 22
+              cidr_ip: 0.0.0.0/0
+            - proto: tcp
+              from_port: 80
+              to_port: 80
+              cidr_ip: 0.0.0.0/0
+            - proto: tcp
+              from_port: 443
+              to_port: 443
+              cidr_ip: 0.0.0.0/0
+            - proto: tcp
+              from_port: 8484
+              to_port: 8484
+              cidr_ip: 0.0.0.0/0
+        rules_egress:
+            - proto: all
+              cidr_ip: 0.0.0.0/0
+    register: basic_firewall
+
+-   name: Create an EC2 key
+    ec2_key:
+      name: "{{ project_name }}-key"
+      region: "{{ aws_region }}"
+      aws_access_key: "{{ aws_access_key }}"
+      aws_secret_key: "{{ aws_secret_key }}"
+    register: awskey
+
+- debug:
+    var: awskey
+
+-   name: save private key
+    copy: content="{{ awskey.key.private_key }}" dest="./{{ project_name }}-key.pem" mode=0600
+    when: awskey.changed
+
+-   name: Create an EC2 instance
+    ec2:
+        key_name: "{{ project_name }}-key"
+        region: "{{ aws_region }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        group_id: "{{ basic_firewall.group_id }}"
+        instance_type: "{{ instance_type }}"
+        user_data: |
+                   #!/bin/sh
+                   sudo apt-get install python -y
+        image: "{{ ami }}"
+        wait: yes
+#        state: present
+        instance_tags:
+            Name: Web Server
+            env:  nginx
+        count_tag:
+            Name: Web Server
+            env:  nginx
+        exact_count: 1
+    register: ec2
+
+- name: Add new instance to host group
+  local_action: add_host hostname={{ item.public_dns_name }} groupname=ec2group
+  with_items: "{{ ec2.tagged_instances }}"
+
+- name: Generate inventory_output_file
+  template:
+    src: inventory.ini.j2
+    dest: inventory/hosts
+
+- name: Add instance to local host group
+  lineinfile: 
+    path: "{{ inventory_output_file }}"
+    insertafter: EOF
+    line: "{{ item.public_ip }} ansible_hostname={{ item.public_dns_name }} ansible_ssh_private_key_file=./{{ project_name }}-key.pem"
+  with_items: "{{ ec2.tagged_instances }}"
+
+- name: Wait for the instances to boot by checking the ssh port wait_for
+  wait_for: host="{{ item.public_ip }}" port=22 delay=60 timeout=320 state=started 
+  with_items: "{{ ec2.tagged_instances }}"
+
+- meta: refresh_inventory
